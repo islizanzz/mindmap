@@ -480,3 +480,17 @@
   border-bottom: 1px solid var(--surface-selected);
 }
 .memo-csv th { font-weight: 400; color: var(--ink-muted); background: var(--surface-sidebar); }
+
+/* Markdown 表格：和 CSV 表格同一套样式；列多放不下时左右滚动，不显示滚动条 */
+.memo-md .memo-md-table { white-space: normal; }
+.memo-md-table-scroll { display: block; overflow-x: auto; border-radius: var(--radius-md); scrollbar-width: none; }
+.memo-md-table-scroll::-webkit-scrollbar { display: none; }
+.memo-md-table table { min-width: 100%; border-collapse: collapse; }
+.memo-md-table th,
+.memo-md-table td {
+  padding: var(--space-1) var(--space-2);
+  text-align: left;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--surface-selected);
+}
+.memo-md-table th { font-weight: 400; color: var(--ink-muted); background: var(--surface-sidebar); }

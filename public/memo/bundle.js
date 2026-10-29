@@ -228,7 +228,46 @@
   var LIST_RE = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/;
   var uid = 0; function nid() { uid += 1; return 'n' + uid; }
 
-  // 把 Markdown 拆成块：标题、段落、列表、代码
+  // 表格（GFM）：表头行 + 分隔行（| --- | :---: |），后面是数据行
+  var TABLE_SEP_RE = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
+  function isTableStart(lines, i) {
+    return lines[i].indexOf('|') >= 0 && i + 1 < lines.length && lines[i + 1].indexOf('|') >= 0 && TABLE_SEP_RE.test(lines[i + 1]);
+  }
+  function splitRow(line) {
+    var s = line.trim(); var cells = []; var cell = '';
+    if (s[0] === '|') s = s.slice(1);
+    if (s[s.length - 1] === '|' && s[s.length - 2] !== '\\') s = s.slice(0, -1);
+    for (var i = 0; i < s.length; i++) {
+      var c = s[i];
+      if (c === '\\' && s[i + 1] === '|') { cell += '|'; i++; }
+      else if (c === '|') { cells.push(cell.trim()); cell = ''; }
+      else cell += c;
+    }
+    cells.push(cell.trim());
+    return cells;
+  }
+  function parseTable(raw) {
+    var lines = raw.split('\n');
+    var align = splitRow(lines[1]).map(function (c) {
+      var l = c[0] === ':', r = c[c.length - 1] === ':';
+      return l && r ? 'center' : r ? 'right' : undefined;
+    });
+    return { head: splitRow(lines[0]), align: align, rows: lines.slice(2).map(splitRow) };
+  }
+  function renderTable(raw) {
+    var t = parseTable(raw); var n = t.head.length;
+    function cells(row, tag) {
+      var out = [];
+      for (var j = 0; j < n; j++) out.push(h(tag, { key: j, style: t.align[j] ? { textAlign: t.align[j] } : undefined }, inline(row[j] || '')));
+      return out;
+    }
+    return h('span', { className: 'memo-md-table-scroll' },
+      h('table', null,
+        h('thead', null, h('tr', null, cells(t.head, 'th'))),
+        h('tbody', null, t.rows.map(function (r, i) { return h('tr', { key: i }, cells(r, 'td')); }))));
+  }
+
+  // 把 Markdown 拆成块：标题、段落、列表、代码、表格
   function parseBlocks(md) {
     var lines = (md || '').replace(/\r\n/g, '\n').split('\n'); var blocks = []; var i = 0;
     while (i < lines.length) {
@@ -240,6 +279,11 @@
         if (i < lines.length) { buf.push(lines[i]); i++; }
         blocks.push({ id: nid(), type: 'code', raw: buf.join('\n') }); continue;
       }
+      if (isTableStart(lines, i)) {
+        var tb = [line, lines[i + 1]]; i += 2;
+        while (i < lines.length && lines[i].trim() && lines[i].indexOf('|') >= 0) { tb.push(lines[i]); i++; }
+        blocks.push({ id: nid(), type: 'table', raw: tb.join('\n') }); continue;
+      }
       var hm = /^(#{1,6})\s+(.*)$/.exec(line);
       if (hm) { blocks.push({ id: nid(), type: 'heading', level: hm[1].length, raw: line }); i++; continue; }
       if (LIST_RE.test(line)) {
@@ -248,7 +292,7 @@
         blocks.push({ id: nid(), type: 'list', raw: items.join('\n') }); continue;
       }
       var para = [];
-      while (i < lines.length && lines[i].trim() && !LIST_RE.test(lines[i]) && !/^#{1,6}\s/.test(lines[i]) && !/^```/.test(lines[i])) { para.push(lines[i]); i++; }
+      while (i < lines.length && lines[i].trim() && !LIST_RE.test(lines[i]) && !/^#{1,6}\s/.test(lines[i]) && !/^```/.test(lines[i]) && !isTableStart(lines, i)) { para.push(lines[i]); i++; }
       blocks.push({ id: nid(), type: 'paragraph', raw: para.join('\n') });
     }
     return blocks;
@@ -500,20 +544,21 @@
     }
     function editable(b) {
       var isEditing = editing === b.id;
-      var tag = b.type === 'heading' ? 'h' + b.level : (b.type === 'code' ? 'pre' : 'p');
+      var tag = b.type === 'heading' ? 'h' + b.level : (b.type === 'code' ? 'pre' : (b.type === 'table' && !isEditing ? 'div' : 'p'));
       var cls = b.type === 'heading' ? (b.level === 1 ? 'title' : 'heading') : '';
-      var content = isEditing ? b.raw : (b.type === 'heading' ? inline(b.raw.replace(/^#{1,6}\s+/, '')) :
+      var content = isEditing ? b.raw : b.type === 'table' ? renderTable(b.raw) : (b.type === 'heading' ? inline(b.raw.replace(/^#{1,6}\s+/, '')) :
         b.type === 'code' ? b.raw.replace(/^```.*\n?/, '').replace(/\n?```$/, '') : inline(b.raw));
       return h(tag, {
         key: b.id + (isEditing ? '-e' : ''),
-        className: cx('memo-md-block', cls, isEditing ? 'memo-md-editing' : ''),
+        className: cx('memo-md-block', cls, b.type === 'table' && !isEditing ? 'memo-md-table' : '', isEditing ? 'memo-md-editing' : ''),
         contentEditable: isEditing, suppressContentEditableWarning: true,
         ref: function (el) { refs.current[b.id] = el; },
         onClick: function (ev) { if (ev.target.tagName === 'A') return; if (!isEditing) setEditing(b.id); },
         onBlur: function () { if (editing === b.id) { setEditing(null); save(commitBlock(b.id)); } },
         onKeyDown: function (ev) {
           if (ev.key === 'Escape') { ev.preventDefault(); ev.currentTarget.blur(); return; }
-          if (ev.key === 'Enter' && !ev.shiftKey && b.type !== 'code') {
+          // 代码块和表格里回车是换行
+          if (ev.key === 'Enter' && !ev.shiftKey && b.type !== 'code' && b.type !== 'table') {
             ev.preventDefault();
             var next = commitBlock(b.id); var idx = -1;
             blocksRef.current.forEach(function (x, i) { if (x.id === b.id) idx = i; });
