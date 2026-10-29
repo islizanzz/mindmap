@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- mindmap 应用图标：开始主题「/」向右分出三个主题。颜色取自设计系统 token。 -->
+  <!-- 底板：macOS 图标栅格，824 × 824，四周留 100 px -->
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="#f9f8f7"/>
+  <rect x="100.5" y="100.5" width="823" height="823" rx="184.5" fill="none" stroke="#dfdedb" stroke-width="1"/>
+  <!-- 连线：line 同色系，圆角折线 -->
+  <path d="M352 512 H430 M430 512 V378 Q430 330 478 330 H516 M430 512 H516 M430 512 V646 Q430 694 478 694 H516"
+        fill="none" stroke="#37352f" stroke-width="28" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- 开始主题「/」：ink 填充，斜线用 surface -->
+  <rect x="200" y="446" width="152" height="132" rx="34" fill="#37352f"/>
+  <path d="M295 474 L257 550" stroke="#ffffff" stroke-width="22" stroke-linecap="round"/>
+  <!-- 三个主题：ink-muted 的文字条 -->
+  <rect x="556" y="300" width="268" height="60" rx="30" fill="#6b6965"/>
+  <rect x="556" y="482" width="204" height="60" rx="30" fill="#6b6965"/>
+  <rect x="556" y="664" width="236" height="60" rx="30" fill="#6b6965"/>
+</svg>

@@ -1,0 +1,50 @@
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  background: var(--surface);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.app {
+  display: flex;
+  height: 100%;
+}
+
+/* 窗口顶部一条可拖动区域；左上角是系统的红绿灯按钮 */
+.drag-strip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 28px;
+  z-index: 15;
+}
+
+/* 侧栏最上面给红绿灯留出位置 */
+.sidebar-top {
+  flex: none;
+  height: 28px;
+}
+
+/* 正文里的文字可以选中 */
+.memo-md,
+.memo-csv {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.content-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: calc(100% - var(--header-height));
+}

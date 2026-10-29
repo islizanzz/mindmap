@@ -1,0 +1,40 @@
+/* mindmap 设计系统的 token（tokens.json 第 3 版），供组件包 bundle.css 使用。来自设计系统，不要手改。 */
+:root {
+  --surface: #ffffff;
+  --surface-sidebar: #f9f8f7;
+  --surface-hover: #f1f0ee;
+  --surface-selected: #ebeae8;
+  --surface-active: #dfdedb;
+  --ink: #37352f;
+  --ink-muted: #6b6965;
+  --line: #85837e;
+  --font-sans: system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 16px;
+  --space-4: 24px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --sidebar-width: 240px;
+  --icon-size: 16px;
+  --icon-button-size: 22px;
+  --header-height: 48px;
+  --menu-width: 160px;
+  --dialog-width: 360px;
+  --dialog-width-lg: 440px;
+  --mindmap-stem: 24px;
+  --mindmap-corner: 8px;
+  --mindmap-stroke: 2px;
+  --mindmap-row: 30px;
+  --shadow-menu: 0 2px 6px rgba(15, 15, 15, 0.06), 0 8px 24px rgba(15, 15, 15, 0.08);
+  --shadow-dialog: 0 4px 12px rgba(15, 15, 15, 0.08), 0 16px 48px rgba(15, 15, 15, 0.12);
+}
+
+body { margin: 0; }
+
+/* 四个文字样式 */
+.text { font-family: var(--font-sans); font-size: 14px; line-height: 22px; font-weight: 400; }
+.label { font-family: var(--font-sans); font-size: 12px; line-height: 20px; font-weight: 600; }
+.title { font-family: var(--font-sans); font-size: 16px; line-height: 24px; font-weight: 400; }
+.heading { font-family: var(--font-sans); font-size: 14px; line-height: 22px; font-weight: 600; }
