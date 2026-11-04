@@ -12,6 +12,9 @@ Your files stay plain `.md` and `.csv` files on disk. mindmap never moves them i
 - **Only what matters.** The sidebar shows folders, `.md` files and `.csv` files, nested to any depth, and hides everything else. File names are shown without extensions, and each file type has its own icon.
 - **Pins.** Pin any file or folder. Pinned items appear in a 置顶 (Pinned) section at the top of the sidebar, across all projects.
 - **Markdown, edited in place.** Click any paragraph or heading to edit it. Changes are saved automatically.
+  - <kbd>Enter</kbd> splits the paragraph at the cursor. <kbd>Backspace</kbd> at the start of a paragraph joins it to the one above.
+  - Arrow keys move between paragraphs.
+  - To select whole paragraphs, drag across them, press <kbd>⌘A</kbd> twice, or press <kbd>Shift</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd> past the start or end of a paragraph. You can then copy, cut or delete them as Markdown. <kbd>⌘Z</kbd> restores deleted paragraphs.
 - **Lists become mind maps.** Ordered and unordered lists are drawn as mind maps. Click one to edit it full screen:
   - <kbd>Enter</kbd> adds a sibling topic.
   - <kbd>Tab</kbd> adds a child topic.

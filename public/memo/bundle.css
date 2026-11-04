@@ -409,6 +409,11 @@
 .memo-md a { color: var(--ink); text-decoration: underline; text-underline-offset: 2px; }
 .memo-md-placeholder { color: var(--ink-muted); }
 .memo-md-tail { min-height: 96px; cursor: text; }
+/* 空段落（比如在段首回车留下的）也占一行高 */
+.memo-md-block:empty:not(.memo-md-editing)::before { content: '\200b'; }
+/* 选中的整块：块本身加底色，原生选区看不见 */
+.memo-md-selected { background: var(--surface-selected); }
+.memo-md-blocksel *::selection { background: transparent; }
 
 /* 思维导图 */
 .memo-map { margin: 0 0 var(--space-3); padding: var(--space-2) 0; overflow: hidden; }

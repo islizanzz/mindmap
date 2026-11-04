@@ -38,6 +38,8 @@
     return out;
   }
   function cx() { return Array.prototype.filter.call(arguments, Boolean).join(' '); }
+  // 输入法正在组字（比如拼音还没上屏）时的按键交给输入法。Safari 里上屏用的回车 isComposing 已是 false，但 keyCode 仍是 229。
+  function composing(e) { var n = e.nativeEvent || e; return !!n.isComposing || n.keyCode === 229 || e.keyCode === 229; }
   function cssNum(name, fallback) {
     var v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue(name));
     return isNaN(v) ? fallback : v;
@@ -522,7 +524,7 @@
     }
     React.useEffect(function () {
       if (props.inline) return undefined;
-      function onKey(e) { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); flushAndClose(); } }
+      function onKey(e) { if (e.key === 'Escape' && !composing(e)) { e.preventDefault(); e.stopPropagation(); flushAndClose(); } }
       document.addEventListener('keydown', onKey, true);
       return function () { document.removeEventListener('keydown', onKey, true); };
     }, [props.onClose, props.inline]);
@@ -537,6 +539,7 @@
     function onKeyDown(n) {
       return function (e) {
         var r;
+        if (composing(e)) return;
         if (e.key === 'Enter' && !e.shiftKey) {
           e.preventDefault(); r = withText(n.id);
           var sib = { id: nid(), text: '', ordered: n.ordered, children: [] };
@@ -585,78 +588,323 @@
     return box;
   }
 
-  /** Markdown 正文：其他内容正常显示，可以直接点击修改；有序和无序列表都画成思维导图，点击后全屏编辑。 */
+  // ---------- 正文编辑：光标 ----------
+  function focusRange() {
+    var sel = window.getSelection(); if (!sel || !sel.rangeCount) return null;
+    var r = document.createRange(); r.setStart(sel.focusNode, sel.focusOffset); return r;
+  }
+  // 光标在屏幕上的位置；空行量不出来时，临时放一个零宽字符来量
+  function caretRect() {
+    var r = focusRange(); if (!r) return null;
+    var rs = r.getClientRects(); if (rs.length) return rs[0];
+    var m = document.createElement('span'); m.textContent = '​'; r.insertNode(m);
+    var b = m.getBoundingClientRect(); m.parentNode.removeChild(m); return b;
+  }
+  function caretX() { var c = caretRect(); return c ? c.left : null; }
+  // 文字区（去掉内边距）的上下沿和行高
+  function lineBox(el) {
+    var cs = getComputedStyle(el); var b = el.getBoundingClientRect();
+    var lh = parseFloat(cs.lineHeight); if (isNaN(lh)) lh = parseFloat(cs.fontSize) * 1.5;
+    return { top: b.top + parseFloat(cs.paddingTop), bottom: b.bottom - parseFloat(cs.paddingBottom), lh: lh };
+  }
+  // 按显示出来的行算（长段落自动换行也算）
+  function onFirstLine(el) { var c = caretRect(); if (!c) return true; var L = lineBox(el); return c.top < L.top + L.lh / 2; }
+  function onLastLine(el) { var c = caretRect(); if (!c) return true; var L = lineBox(el); return c.bottom > L.bottom - L.lh / 2; }
+  // 光标前面（after 为真时是后面）的文字
+  function textBeside(el, after) {
+    var f = focusRange(); if (!f) return '';
+    var r = document.createRange(); r.selectNodeContents(el);
+    if (after) r.setStart(f.startContainer, f.startOffset); else r.setEnd(f.startContainer, f.startOffset);
+    return after ? r.toString().replace(/\n+$/, '') : r.toString();
+  }
+  // 回车拆段：删掉选中的文字，在光标处临时放一个标记，取出整段文字后按标记切成前后两半
+  function splitAtCaret(el) {
+    var sel = window.getSelection(); if (!sel || !sel.rangeCount || !el.contains(sel.anchorNode)) return null;
+    var r = sel.getRangeAt(0); r.deleteContents();
+    var m = document.createTextNode(''); r.insertNode(m);
+    var t = el.innerText.replace(/\n$/, ''); m.parentNode.removeChild(m);
+    var i = t.indexOf(''); if (i < 0) return null;
+    return [t.slice(0, i), t.slice(i + 1)];
+  }
+  function indexOfId(list, id) { for (var i = 0; i < list.length; i++) if (list[i].id === id) return i; return -1; }
+  function isTyping(el) { return !!el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)); }
+
+  /** Markdown 正文：其他内容正常显示，可以直接点击修改；有序和无序列表都画成思维导图，点击后全屏编辑。
+   *  回车在光标处拆段，段首按删除键和上一段合并；方向键在段落之间移动；
+   *  拖过几段、⌘A 两次或 Shift+↑↓ 越过段首段尾会选中整块，可以复制、剪切、删除，删除后 ⌘Z 恢复。 */
   function MarkdownView(props) {
     var s = React.useState(function () { return parseBlocks(props.value); }); var blocks = s[0], setBlocks = s[1];
     var e = React.useState(null); var editing = e[0], setEditing = e[1];
     var m = React.useState(null); var mapOpen = m[0], setMapOpen = m[1];
+    // 选中的整块：{ anchor, focus } 是块的序号
+    var bs = React.useState(null); var bsel = bs[0], setBsel = bs[1];
     var refs = React.useRef({});
+    var rootRef = React.useRef(null);
     var blocksRef = React.useRef(blocks); blocksRef.current = blocks;
+    var editingRef = React.useRef(editing); editingRef.current = editing;
+    var bselRef = React.useRef(bsel); bselRef.current = bsel;
+    var mapRef = React.useRef(mapOpen); mapRef.current = mapOpen;
+    var caret = React.useRef(null);      // 进入下一块后光标放哪：{ at: 'start' | 'end' | 偏移 }，或 { x, line: 'first' | 'last' }
+    var switching = React.useRef(false); // 换块时旧块被换下，不当作失焦再提交一次
+    var history = React.useRef([]);      // 删除整块之前的内容，⌘Z 恢复
+    var noClick = React.useRef(false);   // 拖选结束时的那次点击不进入编辑
 
     React.useEffect(function () {
+      switching.current = false;
+      var c = caret.current || { at: 'end' }; caret.current = null;
       var el = editing && refs.current[editing];
-      if (el) {
-        el.focus();
-        var r = document.createRange(); r.selectNodeContents(el); r.collapse(false);
-        var sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+      if (!el) return;
+      el.focus();
+      var r = null;
+      // 上下移动时尽量保持光标的横向位置
+      if (c.x != null && document.caretRangeFromPoint) {
+        var L = lineBox(el);
+        var p = document.caretRangeFromPoint(c.x, c.line === 'last' ? L.bottom - L.lh / 2 : L.top + L.lh / 2);
+        if (p && el.contains(p.startContainer)) r = p;
       }
+      if (!r) {
+        r = document.createRange(); var t = el.firstChild;
+        if (typeof c.at === 'number' && t && t.nodeType === 3) r.setStart(t, Math.min(c.at, t.length));
+        else { r.selectNodeContents(el); r.collapse(c.at === 'start'); }
+      }
+      var sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
     }, [editing]);
 
-    function save(next) { setBlocks(next); if (props.onChange) props.onChange(serializeBlocks(next)); }
+    function save(next, keepHistory) {
+      if (!keepHistory && serializeBlocks(next) !== serializeBlocks(blocksRef.current)) history.current = [];
+      blocksRef.current = next; setBlocks(next);
+      if (props.onChange) props.onChange(serializeBlocks(next));
+    }
     function rawOf(id) { var el = refs.current[id]; return el ? el.innerText.replace(/\n$/, '') : null; }
     // 编辑完一段：按 Markdown 重新解析这一段（比如输入「# 」就变成标题，输入「- 」就变成列表）
     function commitBlock(id) {
-      var raw = rawOf(id); var cur = blocksRef.current; var idx = -1;
-      cur.forEach(function (b, i) { if (b.id === id) idx = i; });
+      var raw = rawOf(id); var cur = blocksRef.current; var idx = indexOfId(cur, id);
       if (idx < 0 || raw === null) return cur;
       var parsed = raw.trim() ? parseBlocks(raw) : [];
-      var next = cur.slice(0, idx).concat(parsed, cur.slice(idx + 1));
-      return next;
+      return cur.slice(0, idx).concat(parsed, cur.slice(idx + 1));
     }
-    function editable(b) {
+    // 提交当前块，换到另一块编辑
+    function moveTo(fromId, toId, spec) {
+      var next = commitBlock(fromId); caret.current = spec; switching.current = true; save(next); setEditing(toId);
+    }
+    function editAt(next, id, spec) { caret.current = spec; switching.current = true; save(next); setEditing(id); }
+    // 提交当前块并退出编辑；返回这一块解析后占的序号 [from, to]（删空时 to < from）
+    function leave(id) {
+      var cur = blocksRef.current; var idx = indexOfId(cur, id); var next = commitBlock(id);
+      switching.current = true;
+      var a = document.activeElement; if (a && a.blur) a.blur();
+      save(next); setEditing(null);
+      return { n: next.length, from: idx, to: idx + next.length - cur.length };
+    }
+    // 上一块 / 下一块可以编辑的块（跳过思维导图）
+    function neighbor(id, dir) {
+      var cur = blocksRef.current;
+      for (var i = indexOfId(cur, id) + dir; i >= 0 && i < cur.length; i += dir) if (cur[i].type !== 'list') return cur[i];
+      return null;
+    }
+
+    // ---- 选中整块 ----
+    function selRange() { var b = bselRef.current; return b ? [Math.min(b.anchor, b.focus), Math.max(b.anchor, b.focus)] : null; }
+    function select(b) {
+      var n = blocksRef.current.length; if (!n) { setBsel(null); return; }
+      var clamp = function (i) { return Math.max(0, Math.min(n - 1, i)); };
+      var next = { anchor: clamp(b.anchor), focus: clamp(b.focus) }; var old = bselRef.current;
+      if (old && old.anchor === next.anchor && old.focus === next.focus) return;
+      bselRef.current = next; setBsel(next);
+    }
+    // 同时放一个看不见的原生选区，这样「编辑 › 拷贝」也可用
+    function paintRange() {
+      var r = selRange(); var root = rootRef.current; if (!r || !root) return;
+      var a = root.children[r[0]], z = root.children[r[1]]; if (!a || !z) return;
+      var rg = document.createRange(); rg.setStartBefore(a); rg.setEndAfter(z);
+      var sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(rg);
+    }
+    React.useEffect(function () { if (bsel) paintRange(); }, [bsel, blocks]);
+    function clearSel() { bselRef.current = null; setBsel(null); var sel = window.getSelection(); if (sel) sel.removeAllRanges(); }
+    function selectedMarkdown() { var r = selRange(); return serializeBlocks(blocksRef.current.slice(r[0], r[1] + 1)); }
+    function deleteSel() {
+      var r = selRange(); var cur = blocksRef.current;
+      history.current.push(cur); if (history.current.length > 50) history.current.shift();
+      clearSel(); save(cur.slice(0, r[0]).concat(cur.slice(r[1] + 1)), true);
+    }
+    function undo() { var prev = history.current.pop(); if (!prev) return; clearSel(); save(prev, true); }
+
+    React.useEffect(function () {
+      var drag = null;
+      // 点中的是第几块（块是正文区的直接子元素，顺序和 blocks 一致）
+      function blockOf(node) {
+        var root = rootRef.current; if (!root || !root.contains(node)) return -1;
+        while (node && node.parentNode !== root) node = node.parentNode;
+        var i = Array.prototype.indexOf.call(root.children, node);
+        return i < blocksRef.current.length ? i : -1;
+      }
+      function blockAtY(y) {
+        var root = rootRef.current; var k = 0;
+        for (var j = 0; j < blocksRef.current.length; j++) { var c = root.children[j]; if (c && c.getBoundingClientRect().top <= y) k = j; }
+        return k;
+      }
+      function down(ev) {
+        noClick.current = false; drag = null;
+        if (mapRef.current || ev.button !== 0) return;
+        if (bselRef.current) { bselRef.current = null; setBsel(null); }
+        var i = blockOf(ev.target);
+        // 从思维导图里开始拖时，交给导图自己选文字
+        if (i >= 0 && blocksRef.current[i].type !== 'list' && !ev.shiftKey) drag = { start: i, on: false };
+      }
+      function move(ev) {
+        if (!drag) return;
+        if (!(ev.buttons & 1)) { drag = null; return; }
+        var i = blockAtY(ev.clientY);
+        if (!drag.on) {
+          if (i === drag.start) return;
+          drag.on = true;
+          if (editingRef.current) leave(editingRef.current);
+        }
+        select({ anchor: drag.start, focus: i });
+      }
+      function up() { if (drag && drag.on) { noClick.current = true; paintRange(); } drag = null; }
+      function key(ev) {
+        if (ev.defaultPrevented || mapRef.current || composing(ev)) return;
+        var meta = ev.metaKey || ev.ctrlKey; var k = ev.key.toLowerCase(); var b = bselRef.current; var n = blocksRef.current.length;
+        if (!b) {
+          if (editingRef.current || isTyping(document.activeElement)) return;
+          if (meta && !ev.shiftKey && k === 'a' && n) { ev.preventDefault(); select({ anchor: 0, focus: n - 1 }); }
+          else if (meta && !ev.shiftKey && k === 'z' && history.current.length) { ev.preventDefault(); undo(); }
+          return;
+        }
+        var r = selRange();
+        if (k === 'escape') { ev.preventDefault(); clearSel(); }
+        else if (k === 'backspace' || k === 'delete') { ev.preventDefault(); deleteSel(); }
+        else if (meta && k === 'c') { ev.preventDefault(); document.execCommand('copy'); }
+        else if (meta && k === 'x') { ev.preventDefault(); document.execCommand('copy'); deleteSel(); }
+        else if (meta && k === 'a') { ev.preventDefault(); select({ anchor: 0, focus: n - 1 }); }
+        else if (meta && k === 'z' && !ev.shiftKey) { ev.preventDefault(); undo(); }
+        else if (k === 'arrowup' || k === 'arrowdown') {
+          ev.preventDefault(); var d = k === 'arrowup' ? -1 : 1;
+          if (ev.shiftKey) select({ anchor: b.anchor, focus: b.focus + d });
+          else { var f = (d < 0 ? r[0] : r[1]) + d; select({ anchor: f, focus: f }); }
+        }
+        else if (k === 'enter' && !meta) {
+          ev.preventDefault(); var t = blocksRef.current[b.focus]; clearSel();
+          if (t.type === 'list') setMapOpen(t.id); else { caret.current = { at: 'end' }; setEditing(t.id); }
+        }
+      }
+      function copy(ev) {
+        if (!bselRef.current || mapRef.current) return;
+        ev.preventDefault(); ev.clipboardData.setData('text/plain', selectedMarkdown());
+      }
+      document.addEventListener('mousedown', down, true);
+      document.addEventListener('mousemove', move);
+      document.addEventListener('mouseup', up);
+      document.addEventListener('keydown', key);
+      document.addEventListener('copy', copy);
+      return function () {
+        document.removeEventListener('mousedown', down, true);
+        document.removeEventListener('mousemove', move);
+        document.removeEventListener('mouseup', up);
+        document.removeEventListener('keydown', key);
+        document.removeEventListener('copy', copy);
+      };
+    }, []);
+
+    function onKeyDown(b, ev) {
+      if (composing(ev)) return;
+      var el = ev.currentTarget; var sel = window.getSelection(); var collapsed = !!sel && sel.isCollapsed;
+      var meta = ev.metaKey || ev.ctrlKey; var plain = !meta && !ev.altKey && !ev.shiftKey;
+      var cur = blocksRef.current; var i = indexOfId(cur, b.id); var t, L;
+      if (ev.key === 'Escape') { ev.preventDefault(); el.blur(); return; }
+      // 第二次 ⌘A：这一块已经全选，改为选中全部块
+      if (meta && !ev.shiftKey && ev.key.toLowerCase() === 'a' && sel && sel.rangeCount) {
+        var r0 = sel.getRangeAt(0); var pre = document.createRange(); pre.selectNodeContents(el); pre.setEnd(r0.startContainer, r0.startOffset);
+        var post = document.createRange(); post.selectNodeContents(el); post.setStart(r0.endContainer, r0.endOffset);
+        if (!pre.toString() && !post.toString().trim()) { ev.preventDefault(); L = leave(b.id); select({ anchor: 0, focus: L.n - 1 }); }
+        return;
+      }
+      // Shift+↑↓ 到了段首 / 段尾：改为选中整块
+      if (ev.shiftKey && !meta && !ev.altKey && ev.key === 'ArrowUp' && !textBeside(el, false)) {
+        ev.preventDefault(); L = leave(b.id);
+        if (L.to >= L.from) select({ anchor: L.to, focus: L.from - 1 }); else select({ anchor: L.from - 1, focus: L.from - 1 });
+        return;
+      }
+      if (ev.shiftKey && !meta && !ev.altKey && ev.key === 'ArrowDown' && !textBeside(el, true)) {
+        ev.preventDefault(); L = leave(b.id);
+        if (L.to >= L.from) select({ anchor: L.from, focus: L.to + 1 }); else select({ anchor: L.from, focus: L.from });
+        return;
+      }
+      if (plain && collapsed) {
+        if (ev.key === 'ArrowUp' && onFirstLine(el) && (t = neighbor(b.id, -1))) { ev.preventDefault(); moveTo(b.id, t.id, { x: caretX(), line: 'last' }); return; }
+        if (ev.key === 'ArrowDown' && onLastLine(el) && (t = neighbor(b.id, 1))) { ev.preventDefault(); moveTo(b.id, t.id, { x: caretX(), line: 'first' }); return; }
+        if (ev.key === 'ArrowLeft' && !textBeside(el, false) && (t = neighbor(b.id, -1))) { ev.preventDefault(); moveTo(b.id, t.id, { at: 'end' }); return; }
+        if (ev.key === 'ArrowRight' && !textBeside(el, true) && (t = neighbor(b.id, 1))) { ev.preventDefault(); moveTo(b.id, t.id, { at: 'start' }); return; }
+      }
+      // 回车：在光标处拆成两段（代码块和表格里回车是换行）
+      if (ev.key === 'Enter' && !ev.shiftKey && b.type !== 'code' && b.type !== 'table') {
+        ev.preventDefault();
+        var parts = splitAtCaret(el) || [rawOf(b.id) || '', ''];
+        var tail = parts[1].trim() ? parseBlocks(parts[1]) : [];
+        var target = tail[0] && tail[0].type !== 'list' ? tail[0] : null;
+        if (!target) { target = { id: nid(), type: 'paragraph', raw: '' }; tail.unshift(target); }
+        // 在段首回车：上面留一个空段
+        var head = parts[0].trim() ? parseBlocks(parts[0]) : (parts[1].trim() ? [{ id: nid(), type: 'paragraph', raw: '' }] : []);
+        editAt(cur.slice(0, i).concat(head, tail, cur.slice(i + 1)), target.id, { at: 'start' });
+        return;
+      }
+      if (ev.key === 'Backspace' && !(rawOf(b.id) || '').length) {
+        ev.preventDefault(); var prev = neighbor(b.id, -1);
+        editAt(cur.filter(function (x) { return x.id !== b.id; }), prev ? prev.id : null, { at: 'end' });
+        return;
+      }
+      // 段首按删除键：和上一段合并；段尾按 fn+删除键：和下一段合并。代码块、表格不合并，只移过去；思维导图不动
+      var text = b.type === 'paragraph' || b.type === 'heading';
+      function joinable(x) { return x.type === 'paragraph' || x.type === 'heading'; }
+      function join(first, second, firstRaw, secondRaw) {
+        var base = firstRaw.trim() ? first : second;
+        return Object.assign({}, base, { id: nid(), raw: firstRaw + secondRaw });
+      }
+      if (ev.key === 'Backspace' && collapsed && !meta && !ev.altKey && !textBeside(el, false)) {
+        var p = cur[i - 1]; if (!p || p.type === 'list') return;
+        ev.preventDefault();
+        if (!text || !joinable(p)) { moveTo(b.id, p.id, { at: 'end' }); return; }
+        var mb = join(p, b, p.raw, rawOf(b.id) || '');
+        editAt(cur.slice(0, i - 1).concat([mb], cur.slice(i + 1)), mb.id, { at: p.raw.length });
+        return;
+      }
+      if (ev.key === 'Delete' && collapsed && !meta && !ev.altKey && !textBeside(el, true)) {
+        var nx = cur[i + 1]; if (!nx || nx.type === 'list' || !text || !joinable(nx)) return;
+        ev.preventDefault(); var own = rawOf(b.id) || '';
+        var mn = join(b, nx, own, nx.raw);
+        editAt(cur.slice(0, i).concat([mn], cur.slice(i + 2)), mn.id, { at: own.length });
+      }
+    }
+    function editable(b, idx) {
       var isEditing = editing === b.id;
+      var r = bsel ? selRange() : null; var selected = r && idx >= r[0] && idx <= r[1];
       var tag = b.type === 'heading' ? 'h' + b.level : (b.type === 'code' ? 'pre' : (b.type === 'table' && !isEditing ? 'div' : 'p'));
       var cls = b.type === 'heading' ? (b.level === 1 ? 'title' : 'heading') : '';
       var content = isEditing ? b.raw : b.type === 'table' ? renderTable(b.raw) : (b.type === 'heading' ? inline(b.raw.replace(/^#{1,6}\s+/, '')) :
         b.type === 'code' ? b.raw.replace(/^```.*\n?/, '').replace(/\n?```$/, '') : inline(b.raw));
       return h(tag, {
         key: b.id + (isEditing ? '-e' : ''),
-        className: cx('memo-md-block', cls, b.type === 'table' && !isEditing ? 'memo-md-table' : '', isEditing ? 'memo-md-editing' : ''),
+        className: cx('memo-md-block', cls, b.type === 'table' && !isEditing ? 'memo-md-table' : '', isEditing ? 'memo-md-editing' : '', selected ? 'memo-md-selected' : ''),
         contentEditable: isEditing, suppressContentEditableWarning: true,
         ref: function (el) { refs.current[b.id] = el; },
-        onClick: function (ev) { if (ev.target.tagName === 'A') return; if (!isEditing) setEditing(b.id); },
-        onBlur: function () { if (editing === b.id) { setEditing(null); save(commitBlock(b.id)); } },
-        onKeyDown: function (ev) {
-          if (ev.key === 'Escape') { ev.preventDefault(); ev.currentTarget.blur(); return; }
-          // 代码块和表格里回车是换行
-          if (ev.key === 'Enter' && !ev.shiftKey && b.type !== 'code' && b.type !== 'table') {
-            ev.preventDefault();
-            var next = commitBlock(b.id); var idx = -1;
-            blocksRef.current.forEach(function (x, i) { if (x.id === b.id) idx = i; });
-            var newB = { id: nid(), type: 'paragraph', raw: '' };
-            var before = blocksRef.current.slice(0, idx).length; var after = next.length - (blocksRef.current.length - idx - 1);
-            next.splice(after, 0, newB); save(next); setEditing(newB.id);
-          } else if (ev.key === 'Backspace' && !(rawOf(b.id) || '').length) {
-            ev.preventDefault();
-            var cur = blocksRef.current; var i2 = -1; cur.forEach(function (x, i) { if (x.id === b.id) i2 = i; });
-            var prev = null; for (var j = i2 - 1; j >= 0; j--) { if (cur[j].type !== 'list') { prev = cur[j]; break; } }
-            var rest = cur.filter(function (x) { return x.id !== b.id; });
-            save(rest); setEditing(prev ? prev.id : null);
-          }
-        }
+        onClick: function (ev) { if (noClick.current || ev.target.tagName === 'A') return; if (!isEditing) setEditing(b.id); },
+        onBlur: function () { if (switching.current) return; if (editing === b.id) { setEditing(null); save(commitBlock(b.id)); } },
+        onKeyDown: function (ev) { onKeyDown(b, ev); }
       }, content);
     }
     function addAtEnd() {
+      if (noClick.current) return;
       var last = blocks[blocks.length - 1];
       if (last && last.type !== 'list' && !last.raw.trim()) { setEditing(last.id); return; }
       var nb = { id: nid(), type: 'paragraph', raw: '' }; save(blocks.concat([nb])); setEditing(nb.id);
     }
     var open = mapOpen && blocks.filter(function (b) { return b.id === mapOpen; })[0];
-    var openIdx = open ? blocks.indexOf(open) : -1;
-    return h('div', { className: cx('memo-md text', props.className) },
+    var sr = bsel ? selRange() : null;
+    return h('div', { ref: rootRef, className: cx('memo-md text', bsel ? 'memo-md-blocksel' : '', props.className) },
       blocks.map(function (b, idx) {
-        if (b.type === 'list') return h(MindMap, { key: b.id, rootLabel: '/', tree: listToTree(b.raw), onOpen: function () { setMapOpen(b.id); } });
-        return editable(b);
+        if (b.type === 'list') return h(MindMap, { key: b.id, rootLabel: '/', tree: listToTree(b.raw), className: sr && idx >= sr[0] && idx <= sr[1] ? 'memo-md-selected' : '', onOpen: function () { setMapOpen(b.id); } });
+        return editable(b, idx);
       }),
       blocks.length ? null : h('p', { className: 'memo-md-block memo-md-placeholder', onClick: addAtEnd }, '开始写点什么'),
       h('div', { className: 'memo-md-tail', onClick: addAtEnd, 'aria-hidden': true }),
@@ -730,7 +978,7 @@
     function confirm() { if (ok && props.onConfirm) props.onConfirm({ name: name.trim(), folder: folder }); }
     var box = h('div', {
       className: 'memo-dialog memo-dialog-lg', role: 'dialog', 'aria-modal': props.inline ? undefined : 'true', 'aria-label': '创建项目',
-      onKeyDown: function (e) { if (e.key === 'Escape' && props.onCancel) props.onCancel(); if (e.key === 'Enter') { e.preventDefault(); confirm(); } }
+      onKeyDown: function (e) { if (composing(e)) return; if (e.key === 'Escape' && props.onCancel) props.onCancel(); if (e.key === 'Enter') { e.preventDefault(); confirm(); } }
     },
       h('div', { className: 'memo-dialog-head' },
         h('h2', { className: 'title memo-dialog-title' }, '创建项目'),
@@ -766,6 +1014,7 @@
     var box = h('div', {
       className: 'memo-dialog', role: 'dialog', 'aria-modal': props.inline ? undefined : 'true', 'aria-label': props.title,
       onKeyDown: function (e) {
+        if (composing(e)) return;
         if (e.key === 'Escape' && props.onCancel) props.onCancel();
         if (e.key === 'Enter') { e.preventDefault(); confirm(); }
       }
