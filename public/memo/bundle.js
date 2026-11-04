@@ -324,33 +324,38 @@
   }
 
   // ---------- 思维导图 ----------
-  // 用和节点完全一样的样式测量文字宽度，保证连线和节点位置准确
+  // 用和主题完全一样的样式测量文字，保证连线和主题位置准确。maxText 为文字区最大宽度，超过就换行。
   var measurer = null;
-  function textWidth(text) {
+  function measureText(text, maxText) {
     if (!measurer) {
-      measurer = document.createElement('span');
+      measurer = document.createElement('div');
       measurer.className = 'text';
       measurer.setAttribute('aria-hidden', 'true');
-      measurer.style.cssText = 'position:absolute;left:-9999px;top:-9999px;visibility:hidden;white-space:pre;';
+      measurer.style.cssText = 'position:absolute;left:-9999px;top:-9999px;visibility:hidden;width:max-content;white-space:pre-wrap;word-break:break-word;';
       document.body.appendChild(measurer);
     }
+    measurer.style.maxWidth = maxText ? maxText + 'px' : 'none';
     measurer.textContent = text || '';
-    return Math.ceil(measurer.getBoundingClientRect().width);
+    var r = measurer.getBoundingClientRect();
+    return { w: Math.ceil(r.width), h: Math.ceil(r.height) };
   }
-  function layoutTree(rootLabel, tree, minLeaf) {
+  function layoutTree(rootLabel, tree, minLeaf, textOf) {
     var row = cssNum('--mindmap-row', 30), gap = cssNum('--space-1', 4), stem = cssNum('--mindmap-stem', 24),
-      pad = cssNum('--space-2', 8), rootPad = cssNum('--space-3', 16);
+      pad = cssNum('--space-2', 8), rootPad = cssNum('--space-3', 16), max = cssNum('--mindmap-node-max', 440), bd = 1;
     var nodes = [], links = [];
     function measure(n, isRoot) {
-      // 每个主题左右各留 space-2，鼠标移上去时的边框画在这块边距外沿
-      n._w = Math.max(textWidth(isRoot ? rootLabel : plain(n.text)), minLeaf && !isRoot ? minLeaf : 0) + (isRoot ? rootPad : pad) * 2;
+      // 每个主题左右各留 space-2（含 1 px 边框），鼠标移上去时的边框画在这块边距外沿；超过最大宽度就换行，主题变高
+      var side = (isRoot ? rootPad : pad) + bd;
+      var m = measureText(isRoot ? rootLabel : (textOf ? textOf(n) : plain(n.text)), isRoot ? 0 : max - side * 2);
+      n._w = Math.max(m.w, minLeaf && !isRoot ? minLeaf : 0) + side * 2;
+      n._nh = Math.max(row, m.h + gap * 2);
       n.children.forEach(function (c) { measure(c, false); });
       var sum = n.children.reduce(function (s, c) { return s + c._h; }, 0) + Math.max(0, n.children.length - 1) * gap;
-      n._h = Math.max(row, sum);
+      n._h = Math.max(n._nh, sum);
     }
     function place(n, x, top, isRoot, parent) {
       var cy = top + n._h / 2;
-      nodes.push({ node: n, x: x, y: cy - row / 2, w: n._w, root: isRoot, parent: parent });
+      nodes.push({ node: n, x: x, y: cy - n._nh / 2, w: n._w, h: n._nh, root: isRoot, parent: parent });
       if (!n.children.length) return;
       var trunkX = x + n._w + stem;
       var childX = trunkX + stem;
@@ -377,7 +382,7 @@
   }
 
   function MapCanvas(props) {
-    var L = props.layout || layoutTree(props.rootLabel, props.tree, props.editable ? 32 : 0);
+    var L = props.layout || layoutTree(props.rootLabel, props.tree, props.editable ? 32 : 0, props.textOf);
     var stroke = cssNum('--mindmap-stroke', 2);
     var cs = { width: L.width + 'px', height: L.height + 'px' };
     if (props.scale && props.scale < 1) { cs.transform = 'scale(' + props.scale + ')'; cs.transformOrigin = '0 0'; }
@@ -387,14 +392,14 @@
           return linkPaths(l).map(function (d, j) { return h('path', { key: i + '-' + j, d: d, strokeWidth: stroke }); });
         })),
       L.nodes.map(function (n) {
-        var style = { left: n.x + 'px', top: n.y + 'px', height: L.row + 'px' };
+        var style = { left: n.x + 'px', top: n.y + 'px', width: n.w + 'px', height: n.h + 'px' };
         if (n.root) return h('div', { key: n.node.id, className: 'memo-map-node memo-map-root', style: style }, props.rootLabel);
         return props.renderNode ? props.renderNode(n.node, style) :
           h('div', { key: n.node.id, className: 'memo-map-node', style: style }, inline(n.node.text));
       }));
   }
 
-  /** 思维导图（只读）：从左往右展开，开始主题固定是「/」，连线是圆角折线。比容器宽时整张按比例缩小。点击时调用 onOpen。 */
+  /** 思维导图（只读）：从左往右展开，开始主题固定是「/」，连线是圆角折线。比容器宽时整张按比例缩小。文字可以选中复制；鼠标移上去时右上角出现「全屏查看」，点它调用 onOpen。 */
   function MindMap(props) {
     var label = props.rootLabel || '/';
     var L = layoutTree(label, props.tree, 0);
@@ -402,20 +407,82 @@
     var ws = React.useState(0); var avail = ws[0], setAvail = ws[1];
     React.useLayoutEffect(function () {
       var el = ref.current; if (!el) return;
-      function measure() { setAvail(el.clientWidth); }
+      function measure() { var cs = getComputedStyle(el); setAvail(el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight)); }
       measure();
       if (typeof ResizeObserver === 'undefined') { window.addEventListener('resize', measure); return function () { window.removeEventListener('resize', measure); }; }
       var ro = new ResizeObserver(measure); ro.observe(el); return function () { ro.disconnect(); };
     }, []);
     var scale = avail && L.width > avail ? avail / L.width : 1;
+    // 拖动选中：主题是各自浮在画布上的，鼠标落到空白处时浏览器会把选区接到别的主题上。
+    // 这里把选区两端固定在主题里：鼠标在某个主题上就停在鼠标处；在空白处就停在最后经过的主题的开头或结尾。
+    React.useEffect(function () {
+      var root = ref.current; if (!root) return;
+      var drag = null, busy = false;
+      function nodeAt(x, y) {
+        var el = document.elementFromPoint(x, y); el = el && el.closest ? el.closest('.memo-map-node') : null;
+        return el && root.contains(el) ? el : null;
+      }
+      function caret(x, y, el) {
+        var r = document.caretRangeFromPoint ? document.caretRangeFromPoint(x, y) : null;
+        if (r && el.contains(r.startContainer)) return [r.startContainer, r.startOffset];
+        var b = el.getBoundingClientRect();
+        return x < b.left + b.width / 2 ? [el, 0] : [el, el.childNodes.length];
+      }
+      function edge(el, x, y) {
+        var b = el.getBoundingClientRect();
+        var after = y > b.bottom || (y >= b.top && x > b.left + b.width / 2);
+        return after ? [el, el.childNodes.length] : [el, 0];
+      }
+      function fix() {
+        if (!drag || busy) return;
+        var over = nodeAt(drag.x, drag.y); if (over) drag.last = over;
+        var f = over ? caret(drag.x, drag.y, over) : edge(drag.last, drag.x, drag.y);
+        var sel = window.getSelection(); var a = drag.anchor;
+        if (sel.anchorNode === a[0] && sel.anchorOffset === a[1] && sel.focusNode === f[0] && sel.focusOffset === f[1]) return;
+        busy = true; try { sel.setBaseAndExtent(a[0], a[1], f[0], f[1]); } catch (e) {} busy = false;
+      }
+      function down(e) {
+        if (e.button !== 0 || e.detail > 1) { drag = null; return; }
+        var el = e.target.closest ? e.target.closest('.memo-map-node') : null;
+        if (!el || !root.contains(el)) { drag = null; return; }
+        drag = { anchor: caret(e.clientX, e.clientY, el), last: el, x: e.clientX, y: e.clientY };
+      }
+      function move(e) { if (!drag) return; if (!(e.buttons & 1)) { drag = null; return; } drag.x = e.clientX; drag.y = e.clientY; requestAnimationFrame(fix); }
+      function up() { if (drag) { fix(); drag = null; } }
+      function change() { if (drag) requestAnimationFrame(fix); }
+      root.addEventListener('mousedown', down);
+      document.addEventListener('mousemove', move);
+      document.addEventListener('mouseup', up);
+      document.addEventListener('selectionchange', change);
+      return function () {
+        root.removeEventListener('mousedown', down);
+        document.removeEventListener('mousemove', move);
+        document.removeEventListener('mouseup', up);
+        document.removeEventListener('selectionchange', change);
+      };
+    }, []);
+    // 复制时每个主题占一行，不会连成一串
+    function copyNodes(ev) {
+      var sel = window.getSelection(); if (!sel || !sel.rangeCount || sel.isCollapsed) return;
+      var r = sel.getRangeAt(0); var lines = [];
+      ref.current.querySelectorAll('.memo-map-node').forEach(function (el) {
+        if (!r.intersectsNode(el)) return;
+        var nr = document.createRange(); nr.selectNodeContents(el);
+        if (r.compareBoundaryPoints(Range.START_TO_START, nr) > 0) nr.setStart(r.startContainer, r.startOffset);
+        if (r.compareBoundaryPoints(Range.END_TO_END, nr) < 0) nr.setEnd(r.endContainer, r.endOffset);
+        var t = nr.toString(); if (t) lines.push(t);
+      });
+      if (!lines.length) return;
+      ev.preventDefault(); ev.clipboardData.setData('text/plain', lines.join('\n'));
+    }
     return h('div', {
       ref: ref,
-      className: cx('memo-map', props.onOpen ? 'memo-map-clickable' : '', props.className),
-      role: props.onOpen ? 'button' : undefined, tabIndex: props.onOpen ? 0 : undefined,
-      'aria-label': props.onOpen ? '打开思维导图' : undefined,
-      onClick: props.onOpen, onKeyDown: props.onOpen ? rowKeyDown(props.onOpen) : undefined
-    }, h('div', { className: 'memo-map-fit', style: { height: Math.ceil(L.height * scale) + 'px' } },
-      h(MapCanvas, { rootLabel: label, tree: props.tree, layout: L, scale: scale })));
+      className: cx('memo-map memo-map-framed', props.className),
+      onCopy: copyNodes
+    },
+      props.onOpen ? h('button', { type: 'button', className: 'memo-map-expand text', onClick: props.onOpen }, '全屏查看') : null,
+      h('div', { className: 'memo-map-fit', style: { height: Math.ceil(L.height * scale) + 'px' } },
+        h(MapCanvas, { rootLabel: label, tree: props.tree, layout: L, scale: scale })));
   }
 
   function cloneTree(n) { return { id: n.id, text: n.text, ordered: n.ordered, children: n.children.map(cloneTree) }; }
@@ -432,6 +499,9 @@
     var f = React.useState(props.focusId || null); var focusId = f[0], setFocusId = f[1];
     var refs = React.useRef({});
     var treeRef = React.useRef(tree); treeRef.current = tree;
+    // 正在输入的文字：只用来重新排版（换行、主题变高），不回写到主题里，避免打断输入
+    var dr = React.useState({}); var drafts = dr[0], setDrafts = dr[1];
+    function textOf(n) { return Object.prototype.hasOwnProperty.call(drafts, n.id) ? drafts[n.id] : plain(n.text); }
 
     React.useEffect(function () {
       var el = focusId && refs.current[focusId];
@@ -457,7 +527,7 @@
       return function () { document.removeEventListener('keydown', onKey, true); };
     }, [props.onClose, props.inline]);
 
-    function commit(next, nextFocus) { setTree(next); if (nextFocus !== undefined) setFocusId(nextFocus); if (props.onChange) props.onChange(next); }
+    function commit(next, nextFocus) { setDrafts({}); setTree(next); if (nextFocus !== undefined) setFocusId(nextFocus); if (props.onChange) props.onChange(next); }
     function readText(id) { var el = refs.current[id]; return el ? el.textContent : null; }
     function withText(id) {
       var next = cloneTree(treeRef.current); var t = readText(id);
@@ -498,7 +568,8 @@
         'data-placeholder': '输入内容', 'data-state': props.inline && n.id === props.focusId ? 'editing' : undefined,
         ref: function (el) { refs.current[n.id] = el; },
         onFocus: function () { if (focusId !== n.id) setFocusId(n.id); },
-        onKeyDown: onKeyDown(n), onBlur: onBlur(n)
+        onKeyDown: onKeyDown(n), onBlur: onBlur(n),
+        onInput: function (ev) { var t = ev.currentTarget.textContent; setDrafts(function (d) { var o = Object.assign({}, d); o[n.id] = t; return o; }); }
       }, n.text);
     }
     function addFirst() {
@@ -508,7 +579,7 @@
     var box = h('div', { className: cx('memo-map-editor', props.inline ? 'memo-map-editor-inline' : ''), role: 'dialog', 'aria-label': '编辑思维导图' },
       h('div', { className: 'memo-map-editor-close' }, h(IconButton, { icon: 'x', label: '关闭', onClick: flushAndClose })),
       h('div', { className: 'memo-map-editor-body' },
-        h('div', { className: 'memo-map' }, h(MapCanvas, { rootLabel: props.rootLabel || '/', tree: tree, editable: true, renderNode: renderNode })),
+        h('div', { className: 'memo-map' }, h(MapCanvas, { rootLabel: props.rootLabel || '/', tree: tree, editable: true, renderNode: renderNode, textOf: textOf })),
         tree.children.length ? null : h(Button, { variant: 'text', icon: 'plus', onClick: addFirst }, '添加节点')),
       h('p', { className: 'memo-map-editor-hint' }, '回车：添加同级节点　Tab：添加子节点　删空后按删除键：删除节点　Esc：返回'));
     return box;

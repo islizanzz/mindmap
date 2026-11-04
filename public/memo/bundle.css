@@ -412,26 +412,49 @@
 
 /* 思维导图 */
 .memo-map { margin: 0 0 var(--space-3); padding: var(--space-2) 0; overflow: hidden; }
-.memo-map-clickable { cursor: pointer; border-radius: var(--radius-md); user-select: none; -webkit-user-select: none; }
-.memo-map-clickable:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.memo-map-framed { position: relative; padding: var(--space-3); border: 1px solid var(--surface-selected); border-radius: var(--radius-md); }
+.memo-map-framed .memo-map-node { cursor: text; }
+/* 「全屏查看」：只有文字，鼠标在导图里时才显示 */
+.memo-map-expand {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-3);
+  z-index: 1;
+  padding: 0 var(--space-1);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink-muted);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+}
+.memo-map-framed:hover .memo-map-expand,
+.memo-map-framed[data-state="hover"] .memo-map-expand,
+.memo-map-expand:focus-visible { opacity: 1; pointer-events: auto; }
+.memo-map-expand:hover,
+.memo-map-expand[data-state="hover"] { color: var(--ink); }
+.memo-map-expand:focus-visible { outline: 2px solid var(--ink); outline-offset: 0; }
 .memo-map-canvas { position: relative; }
 .memo-map-links { position: absolute; left: 0; top: 0; overflow: visible; }
 .memo-map-links path { fill: none; stroke: var(--line); stroke-linecap: round; stroke-linejoin: round; }
 .memo-map-node {
   position: absolute;
-  display: flex;
-  align-items: center;
   box-sizing: border-box;
-  padding: 0 var(--space-2);
+  max-width: var(--mindmap-node-max);
+  padding: calc(var(--space-1) - 1px) var(--space-2);
   border: 1px solid transparent;
   border-radius: var(--radius-md);
-  white-space: nowrap;
+  white-space: pre-wrap;
+  word-break: break-word;
   color: var(--ink);
 }
 .memo-map-node-edit:hover { border-color: var(--line); }
 .memo-map-root {
-  justify-content: center;
-  padding: 0 var(--space-3);
+  max-width: none;
+  white-space: nowrap;
+  text-align: center;
+  padding: calc(var(--space-1) - 1px) var(--space-3);
   background: var(--surface-selected);
 }
 .memo-map-node-edit {

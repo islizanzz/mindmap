@@ -27,6 +27,7 @@
   --mindmap-corner: 8px;
   --mindmap-stroke: 2px;
   --mindmap-row: 30px;
+  --mindmap-node-max: 440px;
   --shadow-menu: 0 2px 6px rgba(15, 15, 15, 0.06), 0 8px 24px rgba(15, 15, 15, 0.08);
   --shadow-dialog: 0 4px 12px rgba(15, 15, 15, 0.08), 0 16px 48px rgba(15, 15, 15, 0.12);
 }
