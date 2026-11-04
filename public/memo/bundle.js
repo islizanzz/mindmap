@@ -565,7 +565,7 @@
       return h('div', {
         key: n.id, className: 'memo-map-node memo-map-node-edit', style: style,
         contentEditable: !props.inline, suppressContentEditableWarning: true,
-        'data-placeholder': '输入内容', 'data-state': props.inline && n.id === props.focusId ? 'editing' : undefined,
+        'data-state': props.inline && n.id === props.focusId ? 'editing' : undefined,
         ref: function (el) { refs.current[n.id] = el; },
         onFocus: function () { if (focusId !== n.id) setFocusId(n.id); },
         onKeyDown: onKeyDown(n), onBlur: onBlur(n),

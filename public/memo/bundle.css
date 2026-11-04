@@ -465,7 +465,6 @@
 .memo-map-node-edit:focus,
 .memo-map-node-edit[data-state="editing"],
 .memo-map-node-edit:focus:hover { border-color: var(--ink); }
-.memo-map-node-edit:empty::before { content: attr(data-placeholder); color: var(--ink-muted); }
 
 /* 全屏思维导图编辑 */
 .memo-map-editor {
