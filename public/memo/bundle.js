@@ -256,11 +256,20 @@
     });
     return { head: splitRow(lines[0]), align: align, rows: lines.slice(2).map(splitRow) };
   }
+  // 单元格里的 <br>、<br/>、<br /> 换行
+  function cellInline(text) {
+    var out = [];
+    text.split(/<br\s*\/?>/i).forEach(function (part, i) {
+      if (i > 0) out.push(h('br', { key: 'br' + i }));
+      out.push(h(React.Fragment, { key: 'p' + i }, inline(part)));
+    });
+    return out;
+  }
   function renderTable(raw) {
     var t = parseTable(raw); var n = t.head.length;
     function cells(row, tag) {
       var out = [];
-      for (var j = 0; j < n; j++) out.push(h(tag, { key: j, style: t.align[j] ? { textAlign: t.align[j] } : undefined }, inline(row[j] || '')));
+      for (var j = 0; j < n; j++) out.push(h(tag, { key: j, style: t.align[j] ? { textAlign: t.align[j] } : undefined }, cellInline(row[j] || '')));
       return out;
     }
     return h('span', { className: 'memo-md-table-scroll' },
