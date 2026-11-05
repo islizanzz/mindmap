@@ -34,6 +34,7 @@ export function App() {
   const [dirs, setDirs] = useState<Record<string, Entry[]>>({});
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(storage.load<string[]>("expanded", [])));
   const [current, setCurrent] = useState<OpenFile | null>(() => storage.load<OpenFile | null>("current", null));
+  const [collapsed, setCollapsed] = useState<boolean>(() => storage.load<boolean>("sidebarCollapsed", false));
   const [menu, setMenu] = useState<string | null>(null);
   const [dialog, setDialog] = useState<(Dialog & { id: number }) | null>(null);
   const dialogId = useRef(0);
@@ -43,6 +44,7 @@ export function App() {
 
   useEffect(() => storage.save("expanded", [...expanded]), [expanded]);
   useEffect(() => storage.save("current", current), [current]);
+  useEffect(() => storage.save("sidebarCollapsed", collapsed), [collapsed]);
 
   const closeMenu = useCallback(() => setMenu(null), []);
   const toggleMenu = (id: string) => setMenu((m) => (m === id ? null : id));
@@ -422,24 +424,41 @@ export function App() {
   }
 
   return (
-    <div className="app">
+    <div className={collapsed ? "app sidebar-collapsed" : "app"}>
       <div className="drag-strip" data-tauri-drag-region />
-      <Memo.Sidebar>
-        <div className="sidebar-top" />
-        {pins.length > 0 ? (
-          <>
-            <Memo.SectionLabel label="置顶" />
-            {pins.map((p) => renderEntry("pin", p.projectId, p))}
-          </>
-        ) : null}
-        <Memo.SectionLabel
-          label="项目"
-          onMore={() => toggleMenu("projects")}
-          menuOpen={menu === "projects"}
-          menu={<Memo.Menu onClose={closeMenu} items={[{ icon: "plus", label: "创建项目", onClick: createProject }]} />}
-        />
-        {projects.map(renderProject)}
-      </Memo.Sidebar>
+      <button
+        type="button"
+        className="memo-icon-btn sidebar-toggle"
+        aria-label={collapsed ? "展开侧边栏" : "收起侧边栏"}
+        aria-expanded={!collapsed}
+        onClick={() => {
+          setMenu(null);
+          setCollapsed((c) => !c);
+        }}
+      >
+        <svg className="memo-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <rect width="18" height="18" x="3" y="3" rx="2" />
+          <path d="M9 3v18" />
+        </svg>
+      </button>
+      {collapsed ? null : (
+        <Memo.Sidebar>
+          <div className="sidebar-top" />
+          {pins.length > 0 ? (
+            <>
+              <Memo.SectionLabel label="置顶" />
+              {pins.map((p) => renderEntry("pin", p.projectId, p))}
+            </>
+          ) : null}
+          <Memo.SectionLabel
+            label="项目"
+            onMore={() => toggleMenu("projects")}
+            menuOpen={menu === "projects"}
+            menu={<Memo.Menu onClose={closeMenu} items={[{ icon: "plus", label: "创建项目", onClick: createProject }]} />}
+          />
+          {projects.map(renderProject)}
+        </Memo.Sidebar>
+      )}
       <Content file={current} hasProjects={projects.length > 0} flushRef={flushRef} onCreateProject={createProject} />
       {renderDialog()}
     </div>

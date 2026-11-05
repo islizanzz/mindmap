@@ -48,3 +48,16 @@ body {
   justify-content: center;
   height: calc(100% - var(--header-height));
 }
+
+/* 收起 / 展开侧栏的按钮：固定在红绿灯右边，收起后位置不变 */
+.sidebar-toggle {
+  position: fixed;
+  top: 12px;
+  left: 80px;
+  z-index: 20;
+}
+
+/* 侧栏收起后，标题让出按钮的位置 */
+.sidebar-collapsed .memo-doc-header {
+  padding-left: 116px;
+}
