@@ -40,6 +40,19 @@
   function cx() { return Array.prototype.filter.call(arguments, Boolean).join(' '); }
   // 输入法正在组字（比如拼音还没上屏）时的按键交给输入法。Safari 里上屏用的回车 isComposing 已是 false，但 keyCode 仍是 229。
   function composing(e) { var n = e.nativeEvent || e; return !!n.isComposing || n.keyCode === 229 || e.keyCode === 229; }
+  // 粘贴只取纯文字，并把不间断空格（U+00A0）换成普通空格；oneLine 为真时把换行也换成空格
+  function pastePlain(oneLine) {
+    return function (ev) {
+      var cd = ev.clipboardData; if (!cd) return;
+      ev.preventDefault();
+      var t = (cd.getData('text/plain') || '').replace(/\r\n?/g, '\n').replace(/ /g, ' ');
+      if (oneLine) t = t.replace(/^\n+|\n+$/g, '').replace(/[ \t]*\n[ \t]*/g, ' ');
+      t.split('\n').forEach(function (line, i) {
+        if (i) document.execCommand('insertLineBreak');
+        if (line) document.execCommand('insertText', false, line);
+      });
+    };
+  }
   function cssNum(name, fallback) {
     var v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue(name));
     return isNaN(v) ? fallback : v;
@@ -580,7 +593,7 @@
         'data-state': props.inline && n.id === props.focusId ? 'editing' : undefined,
         ref: function (el) { refs.current[n.id] = el; },
         onFocus: function () { if (focusId !== n.id) setFocusId(n.id); },
-        onKeyDown: onKeyDown(n), onBlur: onBlur(n),
+        onKeyDown: onKeyDown(n), onBlur: onBlur(n), onPaste: pastePlain(true),
         onInput: function (ev) { var t = ev.currentTarget.textContent; setDrafts(function (d) { var o = Object.assign({}, d); o[n.id] = t; return o; }); }
       }, n.text);
     }
@@ -899,7 +912,7 @@
         ref: function (el) { refs.current[b.id] = el; },
         onClick: function (ev) { if (noClick.current || ev.target.tagName === 'A') return; if (!isEditing) setEditing(b.id); },
         onBlur: function () { if (switching.current) return; if (editing === b.id) { setEditing(null); save(commitBlock(b.id)); } },
-        onKeyDown: function (ev) { onKeyDown(b, ev); }
+        onKeyDown: function (ev) { onKeyDown(b, ev); }, onPaste: pastePlain(false)
       }, content);
     }
     function addAtEnd() {
