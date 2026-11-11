@@ -49,9 +49,9 @@ body {
   height: calc(100% - var(--header-height));
 }
 
-/* 分区之间隔开 24px；紧挨着顶部红绿灯一行的第一个分区不留上边距 */
+/* 分区之间隔开 16px；紧挨着顶部红绿灯一行的第一个分区不留上边距 */
 .memo-sidebar .memo-section-label {
-  margin-top: 24px;
+  margin-top: 16px;
 }
 .memo-sidebar .sidebar-top + .memo-section-label {
   margin-top: 0;
