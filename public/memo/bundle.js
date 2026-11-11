@@ -278,17 +278,37 @@
     });
     return out;
   }
-  function renderTable(raw) {
+  // 编辑单元格时显示的文字：<br> 变成换行；写回时换行再变回 <br>，| 转义
+  function cellEditText(text) { return text.replace(/<br\s*\/?>/gi, '\n'); }
+  // 把第 r 行（0 是表头，1 起是数据行）第 c 列改成 text，只重写这一行，其他行保持原样；没改动就原样返回
+  function withCell(raw, r, c, text) {
+    var lines = raw.split('\n'); var li = r === 0 ? 0 : r + 1; if (li >= lines.length) return raw;
+    var n = splitRow(lines[0]).length; var cells = splitRow(lines[li]);
+    while (cells.length < n) cells.push('');
+    if (cellEditText(cells[c]) === text.trim()) return raw;
+    cells[c] = text.trim().replace(/\r?\n/g, '<br>');
+    lines[li] = '| ' + cells.slice(0, n).map(function (x) { return x.replace(/\|/g, '\\|'); }).join(' | ') + ' |';
+    return lines.join('\n');
+  }
+  // ctx：{ active: {r, c} | null, ref(r, c), open(r, c), blur(), paste }，用来让单元格直接编辑
+  function renderTable(raw, ctx) {
     var t = parseTable(raw); var n = t.head.length;
-    function cells(row, tag) {
+    function cells(row, tag, r) {
       var out = [];
-      for (var j = 0; j < n; j++) out.push(h(tag, { key: j, style: t.align[j] ? { textAlign: t.align[j] } : undefined }, cellInline(row[j] || '')));
+      for (var j = 0; j < n; j++) {
+        (function (j) {
+          var on = ctx.active && ctx.active.r === r && ctx.active.c === j;
+          var props = { key: on ? j + '-e' : j, ref: ctx.ref(r, j), style: t.align[j] ? { textAlign: t.align[j] } : undefined, onClick: function () { ctx.open(r, j); } };
+          if (on) { props.contentEditable = true; props.suppressContentEditableWarning = true; props.className = 'memo-md-cell-editing'; props.onBlur = ctx.blur; props.onPaste = ctx.paste; }
+          out.push(h(tag, props, on ? cellEditText(row[j] || '') : cellInline(row[j] || '')));
+        })(j);
+      }
       return out;
     }
     return h('span', { className: 'memo-md-table-scroll' },
       h('table', null,
-        h('thead', null, h('tr', null, cells(t.head, 'th'))),
-        h('tbody', null, t.rows.map(function (r, i) { return h('tr', { key: i }, cells(r, 'td')); }))));
+        h('thead', null, h('tr', null, cells(t.head, 'th', 0))),
+        h('tbody', null, t.rows.map(function (r, i) { return h('tr', { key: i }, cells(r, 'td', i + 1)); }))));
   }
 
   // 把 Markdown 拆成块：标题、段落、列表、代码、表格
@@ -670,12 +690,15 @@
     var switching = React.useRef(false); // 换块时旧块被换下，不当作失焦再提交一次
     var history = React.useRef([]);      // 删除整块之前的内容，⌘Z 恢复
     var noClick = React.useRef(false);   // 拖选结束时的那次点击不进入编辑
+    // 表格：正在编辑的单元格 { id: 块, r: 行（0 是表头）, c: 列 }。表格不整块切成文本，而是直接编辑单元格
+    var cs = React.useState(null); var cellPos = cs[0], setCellPos = cs[1];
+    var cellPosRef = React.useRef(null);
+    var cellRefs = React.useRef({});
+    var cellCaret = React.useRef(null);  // 进入下一个单元格后光标放哪，规则同 caret
+    function setCell(p) { cellPosRef.current = p; setCellPos(p); }
 
-    React.useEffect(function () {
-      switching.current = false;
-      var c = caret.current || { at: 'end' }; caret.current = null;
-      var el = editing && refs.current[editing];
-      if (!el) return;
+    // 把光标放进 el：上下移动时尽量保持横向位置
+    function focusAt(el, c) {
       el.focus();
       var r = null;
       // 上下移动时尽量保持光标的横向位置
@@ -690,7 +713,43 @@
         else { r.selectNodeContents(el); r.collapse(c.at === 'start'); }
       }
       var sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+    }
+
+    // 表格里，光标的横向位置落在第几列
+    function colAtX(x, n) {
+      if (x == null) return 0;
+      for (var j = 0; j < n; j++) { var el = cellRefs.current['0-' + j]; if (el && x < el.getBoundingClientRect().right) return j; }
+      return n - 1;
+    }
+    // 从别的块（或点击）进入一个表格时，落在哪个单元格
+    function pickCell(b, c) {
+      var t = parseTable(b.raw); var rows = t.rows.length + 1; var n = t.head.length;
+      if (c.line === 'first' || c.line === 'last') return { id: b.id, r: c.line === 'first' ? 0 : rows - 1, c: colAtX(c.x, n) };
+      if (c.at === 'start') return { id: b.id, r: 0, c: 0 };
+      return { id: b.id, r: rows - 1, c: n - 1 };
+    }
+
+    React.useEffect(function () {
+      switching.current = false;
+      var c = caret.current || { at: 'end' }; caret.current = null;
+      var b = editing ? blocksRef.current[indexOfId(blocksRef.current, editing)] : null;
+      if (b && b.type === 'table') {
+        // 点击单元格进入时已经选好了单元格；从别的块进入时在这里挑
+        if (!cellPosRef.current || cellPosRef.current.id !== editing) { cellCaret.current = c; setCell(pickCell(b, c)); }
+        return;
+      }
+      if (cellPosRef.current) setCell(null);
+      var el = editing && refs.current[editing];
+      if (!el) return;
+      focusAt(el, c);
     }, [editing]);
+    React.useEffect(function () {
+      if (!cellPos) return;
+      switching.current = false;
+      var c = cellCaret.current || { at: 'end' }; cellCaret.current = null;
+      var el = cellRefs.current[cellPos.r + '-' + cellPos.c];
+      if (el && el.isContentEditable) focusAt(el, c);
+    }, [cellPos]);
 
     function save(next, keepHistory) {
       if (!keepHistory && serializeBlocks(next) !== serializeBlocks(blocksRef.current)) history.current = [];
@@ -698,9 +757,84 @@
       if (props.onChange) props.onChange(serializeBlocks(next));
     }
     function rawOf(id) { var el = refs.current[id]; return el ? el.innerText.replace(/\n$/, '') : null; }
+    // 表格块当前的内容：把正在编辑的单元格的文字写回
+    function tableRaw(b) {
+      var p = cellPosRef.current; if (!p || p.id !== b.id) return b.raw;
+      var el = cellRefs.current[p.r + '-' + p.c]; if (!el || !el.isContentEditable) return b.raw;
+      return withCell(b.raw, p.r, p.c, el.innerText.replace(/\n$/, ''));
+    }
+    // 在同一个表格里换到另一个单元格
+    function goCell(b, r, c, spec) {
+      var cur = blocksRef.current; var i = indexOfId(cur, b.id); var raw = tableRaw(cur[i]);
+      cellCaret.current = spec; switching.current = true;
+      if (raw !== cur[i].raw) save(cur.map(function (x) { return x.id === b.id ? Object.assign({}, x, { raw: raw }) : x; }));
+      setCell({ id: b.id, r: r, c: c });
+    }
+    // 点击单元格：直接在这个单元格里编辑
+    function openCell(b, r, c) {
+      if (noClick.current) return;
+      var p = cellPosRef.current;
+      if (editingRef.current === b.id && p && p.id === b.id) { if (p.r !== r || p.c !== c) goCell(b, r, c, { at: 'end' }); return; }
+      cellCaret.current = { at: 'end' }; setCell({ id: b.id, r: r, c: c }); setEditing(b.id);
+    }
+    function cellBlur(b) {
+      if (switching.current || editingRef.current !== b.id) return;
+      var next = commitBlock(b.id); setCell(null); setEditing(null); save(next);
+    }
+    // 表格里的按键：Tab / Shift+Tab 换格，回车到下一行，Shift+回车单元格内换行，方向键到头后换格或离开表格
+    function tableKeyDown(b, ev) {
+      if (composing(ev)) return;
+      var p = cellPosRef.current; if (!p || p.id !== b.id) return;
+      var el = cellRefs.current[p.r + '-' + p.c]; if (!el) return;
+      var cur = blocksRef.current; var t = parseTable(cur[indexOfId(cur, b.id)].raw);
+      var nrows = t.rows.length + 1, ncols = t.head.length; var nb;
+      var sel = window.getSelection(); var collapsed = !!sel && sel.isCollapsed;
+      var plain = !ev.metaKey && !ev.ctrlKey && !ev.altKey && !ev.shiftKey;
+      if (ev.key === 'Escape') { ev.preventDefault(); el.blur(); return; }
+      if (ev.key === 'Tab') {
+        ev.preventDefault();
+        if (ev.shiftKey) { if (p.c > 0) goCell(b, p.r, p.c - 1, { at: 'end' }); else if (p.r > 0) goCell(b, p.r - 1, ncols - 1, { at: 'end' }); }
+        else if (p.c + 1 < ncols) goCell(b, p.r, p.c + 1, { at: 'end' });
+        else if (p.r + 1 < nrows) goCell(b, p.r + 1, 0, { at: 'end' });
+        return;
+      }
+      if (ev.key === 'Enter' && !ev.metaKey && !ev.ctrlKey) {
+        ev.preventDefault();
+        if (ev.shiftKey) document.execCommand('insertLineBreak');
+        else if (p.r + 1 < nrows) goCell(b, p.r + 1, p.c, { at: 'end' });
+        else el.blur();
+        return;
+      }
+      if (!plain || !collapsed) return;
+      if (ev.key === 'ArrowUp' && onFirstLine(el)) {
+        ev.preventDefault(); var x = caretX();
+        if (p.r > 0) goCell(b, p.r - 1, p.c, { x: x, line: 'last' });
+        else if ((nb = neighbor(b.id, -1))) moveTo(b.id, nb.id, { x: x, line: 'last' });
+      } else if (ev.key === 'ArrowDown' && onLastLine(el)) {
+        ev.preventDefault(); var y = caretX();
+        if (p.r + 1 < nrows) goCell(b, p.r + 1, p.c, { x: y, line: 'first' });
+        else if ((nb = neighbor(b.id, 1))) moveTo(b.id, nb.id, { x: y, line: 'first' });
+      } else if (ev.key === 'ArrowLeft' && !textBeside(el, false)) {
+        ev.preventDefault();
+        if (p.c > 0) goCell(b, p.r, p.c - 1, { at: 'end' });
+        else if (p.r > 0) goCell(b, p.r - 1, ncols - 1, { at: 'end' });
+        else if ((nb = neighbor(b.id, -1))) moveTo(b.id, nb.id, { at: 'end' });
+      } else if (ev.key === 'ArrowRight' && !textBeside(el, true)) {
+        ev.preventDefault();
+        if (p.c + 1 < ncols) goCell(b, p.r, p.c + 1, { at: 'start' });
+        else if (p.r + 1 < nrows) goCell(b, p.r + 1, 0, { at: 'start' });
+        else if ((nb = neighbor(b.id, 1))) moveTo(b.id, nb.id, { at: 'start' });
+      }
+    }
     // 编辑完一段：按 Markdown 重新解析这一段（比如输入「# 」就变成标题，输入「- 」就变成列表）
     function commitBlock(id) {
-      var raw = rawOf(id); var cur = blocksRef.current; var idx = indexOfId(cur, id);
+      var cur = blocksRef.current; var idx = indexOfId(cur, id);
+      // 表格：只把正在编辑的那个单元格写回去，不重新解析
+      if (idx >= 0 && cur[idx].type === 'table') {
+        var tr = tableRaw(cur[idx]);
+        return tr === cur[idx].raw ? cur : cur.slice(0, idx).concat([Object.assign({}, cur[idx], { raw: tr })], cur.slice(idx + 1));
+      }
+      var raw = rawOf(id);
       if (idx < 0 || raw === null) return cur;
       var parsed = raw.trim() ? parseBlocks(raw) : [];
       return cur.slice(0, idx).concat(parsed, cur.slice(idx + 1));
@@ -901,13 +1035,27 @@
     function editable(b, idx) {
       var isEditing = editing === b.id;
       var r = bsel ? selRange() : null; var selected = r && idx >= r[0] && idx <= r[1];
-      var tag = b.type === 'heading' ? 'h' + b.level : (b.type === 'code' ? 'pre' : (b.type === 'table' && !isEditing ? 'div' : 'p'));
+      if (b.type === 'table') {
+        var ap = cellPos && isEditing && cellPos.id === b.id ? cellPos : null;
+        return h('div', {
+          key: b.id, className: cx('memo-md-block memo-md-table', selected ? 'memo-md-selected' : ''),
+          ref: function (el) { refs.current[b.id] = el; },
+          onKeyDown: function (ev) { tableKeyDown(b, ev); }
+        }, renderTable(b.raw, {
+          active: ap,
+          ref: function (r, c) { return function (el) { cellRefs.current[r + '-' + c] = el; }; },
+          open: function (r, c) { openCell(b, r, c); },
+          blur: function () { cellBlur(b); },
+          paste: pastePlain(true)
+        }));
+      }
+      var tag = b.type === 'heading' ? 'h' + b.level : (b.type === 'code' ? 'pre' : 'p');
       var cls = b.type === 'heading' ? (b.level === 1 ? 'title' : 'heading') : '';
-      var content = isEditing ? b.raw : b.type === 'table' ? renderTable(b.raw) : (b.type === 'heading' ? inline(b.raw.replace(/^#{1,6}\s+/, '')) :
+      var content = isEditing ? b.raw : (b.type === 'heading' ? inline(b.raw.replace(/^#{1,6}\s+/, '')) :
         b.type === 'code' ? b.raw.replace(/^```.*\n?/, '').replace(/\n?```$/, '') : inline(b.raw));
       return h(tag, {
         key: b.id + (isEditing ? '-e' : ''),
-        className: cx('memo-md-block', cls, b.type === 'table' && !isEditing ? 'memo-md-table' : '', isEditing ? 'memo-md-editing' : '', selected ? 'memo-md-selected' : ''),
+        className: cx('memo-md-block', cls, isEditing ? 'memo-md-editing' : '', selected ? 'memo-md-selected' : ''),
         contentEditable: isEditing, suppressContentEditableWarning: true,
         ref: function (el) { refs.current[b.id] = el; },
         onClick: function (ev) { if (noClick.current || ev.target.tagName === 'A') return; if (!isEditing) setEditing(b.id); },
