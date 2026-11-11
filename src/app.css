@@ -9,7 +9,6 @@ body {
   overflow: hidden;
   background: var(--surface);
   color: var(--ink);
-  -webkit-font-smoothing: antialiased;
   user-select: none;
   -webkit-user-select: none;
 }
