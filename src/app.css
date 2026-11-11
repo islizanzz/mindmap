@@ -29,10 +29,10 @@ body {
   z-index: 15;
 }
 
-/* 侧栏最上面给红绿灯留出位置 */
+/* 侧栏最上面给红绿灯留出位置（28px），再空 8px 才是「置顶」和「项目」 */
 .sidebar-top {
   flex: none;
-  height: 28px;
+  height: 36px;
 }
 
 /* 正文里的文字可以选中 */
