@@ -298,7 +298,7 @@
       for (var j = 0; j < n; j++) {
         (function (j) {
           var on = ctx.active && ctx.active.r === r && ctx.active.c === j;
-          var props = { key: on ? j + '-e' : j, ref: ctx.ref(r, j), style: t.align[j] ? { textAlign: t.align[j] } : undefined, onClick: function () { ctx.open(r, j); } };
+          var props = { key: on ? j + '-e' : j, ref: ctx.ref(r, j), style: t.align[j] ? { textAlign: t.align[j] } : undefined, onClick: function (ev) { ctx.open(r, j, ev); } };
           if (on) { props.contentEditable = true; props.suppressContentEditableWarning = true; props.className = 'memo-md-cell-editing'; props.onBlur = ctx.blur; props.onPaste = ctx.paste; }
           out.push(h(tag, props, on ? cellEditText(row[j] || '') : cellInline(row[j] || '')));
         })(j);
@@ -771,11 +771,25 @@
       setCell({ id: b.id, r: r, c: c });
     }
     // 点击单元格：直接在这个单元格里编辑
-    function openCell(b, r, c) {
+    // 光标落在点击的位置：先数出点击处前面有几个字，再对到原文里（原文比显示出来的多 ** 之类的标记）
+    function clickOffset(el, ev, raw) {
+      if (!ev || !document.caretRangeFromPoint || el.isContentEditable) return null;
+      var pt = document.caretRangeFromPoint(ev.clientX, ev.clientY);
+      if (!pt || !el.contains(pt.startContainer)) return null;
+      var rg = document.createRange(); rg.selectNodeContents(el); rg.setEnd(pt.startContainer, pt.startOffset);
+      var box = document.createElement('div'); box.appendChild(rg.cloneContents());
+      Array.prototype.forEach.call(box.querySelectorAll('br'), function (x) { x.replaceWith('\n'); });
+      var shown = box.textContent; var text = cellEditText(raw); var i = 0, k = 0;
+      while (k < shown.length && i < text.length) { if (text[i] === shown[k]) k++; i++; }
+      return k < shown.length ? null : i;
+    }
+    function openCell(b, r, c, ev) {
       if (noClick.current) return;
       var p = cellPosRef.current;
       if (editingRef.current === b.id && p && p.id === b.id) { if (p.r !== r || p.c !== c) goCell(b, r, c, { at: 'end' }); return; }
-      cellCaret.current = { at: 'end' }; setCell({ id: b.id, r: r, c: c }); setEditing(b.id);
+      var t = parseTable(b.raw); var cellRaw = ((r === 0 ? t.head : t.rows[r - 1]) || [])[c] || '';
+      var off = clickOffset(ev && ev.currentTarget, ev, cellRaw);
+      cellCaret.current = { at: off == null ? 'end' : off }; setCell({ id: b.id, r: r, c: c }); setEditing(b.id);
     }
     function cellBlur(b) {
       if (switching.current || editingRef.current !== b.id) return;
@@ -1044,7 +1058,7 @@
         }, renderTable(b.raw, {
           active: ap,
           ref: function (r, c) { return function (el) { cellRefs.current[r + '-' + c] = el; }; },
-          open: function (r, c) { openCell(b, r, c); },
+          open: function (r, c, ev) { openCell(b, r, c, ev); },
           blur: function () { cellBlur(b); },
           paste: pastePlain(true)
         }));

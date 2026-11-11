@@ -539,7 +539,7 @@
 .memo-md-table th { font-weight: 600; white-space: nowrap; color: var(--ink); background: var(--surface-sidebar); }
 .memo-md-table tbody tr:last-child td { border-bottom: 0; }
 
-/* Markdown 表格：点击单元格直接在格子里编辑，当前格子画一圈细边框；空格子也占一行高 */
+/* Markdown 表格：点击单元格直接在格子里编辑，编辑中的格子不加边框和底色，光标落在点击的位置；空格子也占一行高 */
 .memo-md-table th,
 .memo-md-table td { cursor: text; }
 .memo-md-table th:empty::before,
@@ -548,5 +548,4 @@
   white-space: pre-wrap;
   outline: 0;
   caret-color: var(--ink);
-  box-shadow: inset 0 0 0 1px var(--ink);
 }
