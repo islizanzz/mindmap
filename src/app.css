@@ -64,6 +64,13 @@ body {
   left: calc(var(--sidebar-width) - var(--space-2) - var(--icon-button-size));
   z-index: 20;
 }
+/* 侧栏展开时按钮是「展开」状态，组件会给它画底色；设计稿里没有，只在鼠标移上去时才有 */
+.memo-icon-btn.sidebar-toggle[aria-expanded="true"] {
+  background: transparent;
+}
+.memo-icon-btn.sidebar-toggle[aria-expanded="true"]:hover {
+  background: var(--surface-active);
+}
 .sidebar-collapsed .sidebar-toggle {
   top: calc((var(--header-height) - var(--icon-button-size)) / 2);
   left: 80px;
