@@ -49,15 +49,27 @@ body {
   height: calc(100% - var(--header-height));
 }
 
-/* 收起 / 展开侧栏的按钮：固定在红绿灯右边，收起后位置不变 */
+/* 分区之间隔开 24px；紧挨着顶部红绿灯一行的第一个分区不留上边距 */
+.memo-sidebar .memo-section-label {
+  margin-top: 24px;
+}
+.memo-sidebar .sidebar-top + .memo-section-label {
+  margin-top: 0;
+}
+
+/* 收起 / 展开侧栏的按钮：侧栏展开时在侧栏顶部最右侧，和红绿灯同一行；收起后移到内容标题左边 */
 .sidebar-toggle {
   position: fixed;
-  top: 12px;
-  left: 80px;
+  top: calc(var(--space-2) + (28px - var(--icon-button-size)) / 2);
+  left: calc(var(--sidebar-width) - var(--space-2) - var(--icon-button-size));
   z-index: 20;
+}
+.sidebar-collapsed .sidebar-toggle {
+  top: calc((var(--header-height) - var(--icon-button-size)) / 2);
+  left: 80px;
 }
 
 /* 侧栏收起后，标题让出按钮的位置 */
 .sidebar-collapsed .memo-doc-header {
-  padding-left: 116px;
+  padding-left: 112px;
 }
